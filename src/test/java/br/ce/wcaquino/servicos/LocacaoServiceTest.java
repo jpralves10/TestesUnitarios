@@ -7,12 +7,11 @@ import static br.ce.wcaquino.builders.UsuarioBuilder.umUsuario;
 import static br.ce.wcaquino.matchers.MatchersCustomizados.caiNumaSegunda;
 import static br.ce.wcaquino.matchers.MatchersCustomizados.ehHoje;
 import static br.ce.wcaquino.matchers.MatchersCustomizados.ehHojeComDiferencaDias;
-import static br.ce.wcaquino.utils.DataUtils.verificarDiaSemana;
+import static br.ce.wcaquino.utils.DataUtils.isMesmaData;
+import static br.ce.wcaquino.utils.DataUtils.obterData;
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.assertThat;
-import static org.junit.Assume.assumeFalse;
-import static org.junit.Assume.assumeTrue;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -20,9 +19,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
+import java.lang.reflect.Method;
 import java.util.Arrays;
-import java.util.Calendar;
-import java.util.Date;
 import java.util.List;
 
 import org.junit.Assert;
@@ -32,10 +30,13 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ErrorCollector;
 import org.junit.rules.ExpectedException;
+import org.junit.runner.RunWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
+import org.mockito.Spy;
 
 import br.ce.wcaquino.daos.LocacaoDAO;
 import br.ce.wcaquino.entidades.Filme;
@@ -43,13 +44,16 @@ import br.ce.wcaquino.entidades.Locacao;
 import br.ce.wcaquino.entidades.Usuario;
 import br.ce.wcaquino.exceptions.FilmeSemEstoqueException;
 import br.ce.wcaquino.exceptions.LocadoraException;
+import br.ce.wcaquino.runners.ParallelRunner;
 
+@RunWith(ParallelRunner.class)
 public class LocacaoServiceTest {
 
 	private static Usuario usuario;
 	private static Filme filme;
+	private static Locacao locacao;
 
-	@InjectMocks
+	@InjectMocks @Spy
 	private LocacaoService service;
 
 	@Mock
@@ -69,6 +73,7 @@ public class LocacaoServiceTest {
 	public static void setupClass(){
 		usuario = umUsuario().agora();
 		filme = umFilme().agora();
+		locacao = umaLocacao().agora();
 	}
 	
 	@Before
@@ -78,17 +83,15 @@ public class LocacaoServiceTest {
 	
 	@Test
 	public void deveAlugarFilme() throws Exception {
-		assumeFalse(verificarDiaSemana(new Date(), Calendar.SATURDAY));
-		
 		List<Filme> filmes = Arrays.asList(filme);
+		
+		Mockito.doReturn(obterData(25, 8, 2017)).when(service).obterData();
 		
 		Locacao locacao = service.alugarFilme(usuario, filmes);
 
 		error.checkThat(locacao.getValor(), is(equalTo(4.0)));
-		//error.checkThat(isMesmaData(locacao.getDataLocacao(), new Date()), is(true));
-		error.checkThat(locacao.getDataLocacao(), ehHoje());
-		//error.checkThat(isMesmaData(locacao.getDataRetorno(), obterDataComDiferencaDias(1)), is(true));
-		error.checkThat(locacao.getDataRetorno(), ehHojeComDiferencaDias(1));
+		error.checkThat(isMesmaData(locacao.getDataLocacao(), obterData(25, 8, 2017)), is(true));
+		error.checkThat(isMesmaData(locacao.getDataRetorno(), obterData(26, 8, 2017)), is(true));
 	}
 	
 	@Test(expected = FilmeSemEstoqueException.class) //Forma Elegante
@@ -121,10 +124,10 @@ public class LocacaoServiceTest {
 	}
 	
 	@Test
-	public void deveDevolverNaSegundaAoAlugarNoSabado() throws FilmeSemEstoqueException, LocadoraException{
-		assumeTrue(verificarDiaSemana(new Date(), Calendar.SATURDAY));
-		
+	public void deveDevolverNaSegundaAoAlugarNoSabado() throws Exception{
 		List<Filme> filmes = Arrays.asList(filme);
+		
+		Mockito.doReturn(obterData(26, 8, 2017)).when(service).obterData();
 		
 		Locacao locacao = service.alugarFilme(usuario, filmes);
 		
@@ -162,6 +165,18 @@ public class LocacaoServiceTest {
 	}
 	
 	@Test
+	public void deveCalcularValorLocacao() throws Exception{
+		List<Filme> filmes = Arrays.asList(filme);
+		
+		Class<LocacaoService> clazz = LocacaoService.class;
+		Method metodo = clazz.getDeclaredMethod("calcularValorLocacao", List.class);
+		metodo.setAccessible(true);
+		Double valor = (Double) metodo.invoke(service, filmes);
+		
+		assertThat(valor, is(4.0));
+	}
+	
+	@Test
 	public void deveEnviarEmailParaLocacoesAtrasadas(){
 		
 		Usuario usuario1 = umUsuario().comNome("Usuario 1 (Atrasado)").agora();
@@ -183,5 +198,19 @@ public class LocacaoServiceTest {
 		verify(emailService, never()).notificarAtraso(usuario2); //Verificação nunca deve acontecer (usuario em dia)
 		verifyNoMoreInteractions(emailService);
 		//verifyZeroInteractions(spcService); //Esta linha é desnecessária, spcService não é invocado em notificarAtraso()
+	}
+	
+	@Test
+	public void deveProrrogarUmaLocacao(){
+		
+		service.prorrogarLocacao(locacao, 3);
+		
+		ArgumentCaptor<Locacao> argCapt = ArgumentCaptor.forClass(Locacao.class);
+		Mockito.verify(locacaoDAO).salvar(argCapt.capture());
+		Locacao locacaoRetornada = argCapt.getValue();
+		
+		error.checkThat(locacaoRetornada.getValor(), is(12.0));
+		error.checkThat(locacaoRetornada.getDataLocacao(), ehHoje());
+		error.checkThat(locacaoRetornada.getDataRetorno(), ehHojeComDiferencaDias(3));
 	}
 }

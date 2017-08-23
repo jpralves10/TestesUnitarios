@@ -25,4 +25,8 @@ public class CalculadoraService {
 		
 		return Integer.parseInt(a) / Integer.parseInt(b);
 	}
+	
+	public void imprime(){
+		System.out.println("Passei aqui");
+	}
 }

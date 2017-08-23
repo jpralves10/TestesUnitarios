@@ -13,6 +13,7 @@ import br.ce.wcaquino.entidades.Locacao;
 import br.ce.wcaquino.entidades.Usuario;
 import br.ce.wcaquino.exceptions.FilmeSemEstoqueException;
 import br.ce.wcaquino.exceptions.LocadoraException;
+import br.ce.wcaquino.utils.DataUtils;
 
 public class LocacaoService {
 	
@@ -51,7 +52,29 @@ public class LocacaoService {
 		
 		locacao.setFilmes(filmes);
 		locacao.setUsuario(usuario);
-		locacao.setDataLocacao(new Date());
+		locacao.setDataLocacao(obterData());
+		locacao.setValor(calcularValorLocacao(filmes));
+
+		//Entrega no dia seguinte
+		Date dataEntrega = obterData();
+		dataEntrega = adicionarDias(dataEntrega, 1);
+		
+		if(verificarDiaSemana(dataEntrega, Calendar.SUNDAY))
+			dataEntrega = adicionarDias(dataEntrega, 1);
+		
+		locacao.setDataRetorno(dataEntrega);
+		
+		//Salvando a locacao...	
+		locacaoDAO.salvar(locacao);
+				
+		return locacao;
+	}
+
+	protected Date obterData() {
+		return new Date();
+	}
+
+	private Double calcularValorLocacao(List<Filme> filmes) {
 		Double valorTotal = 0d;
 		int i = 0;
 		for(Filme filme : filmes){
@@ -68,28 +91,24 @@ public class LocacaoService {
 			
 			valorTotal += valorFilme; i++;
 		}
-		locacao.setValor(valorTotal);
-
-		//Entrega no dia seguinte
-		Date dataEntrega = new Date();
-		dataEntrega = adicionarDias(dataEntrega, 1);
-		
-		if(verificarDiaSemana(dataEntrega, Calendar.SUNDAY))
-			dataEntrega = adicionarDias(dataEntrega, 1);
-		
-		locacao.setDataRetorno(dataEntrega);
-		
-		//Salvando a locacao...	
-		locacaoDAO.salvar(locacao);
-				
-		return locacao;
+		return valorTotal;
 	}
 
 	public void notificarAtrasos(){
 		List<Locacao> locacoes = locacaoDAO.obterLocacoesPendentes();
 		for(Locacao locacao: locacoes){
-			if(locacao.getDataRetorno().before(new Date()))
+			if(locacao.getDataRetorno().before(obterData()))
 				emailService.notificarAtraso(locacao.getUsuario());
 		}
+	}
+	
+	public void prorrogarLocacao(Locacao locacao, int dias){
+		Locacao novaLocacao = new Locacao();
+		novaLocacao.setUsuario(locacao.getUsuario());
+		novaLocacao.setFilmes(locacao.getFilmes());
+		novaLocacao.setDataLocacao(obterData());
+		novaLocacao.setDataRetorno(DataUtils.obterDataComDiferencaDias(dias));
+		novaLocacao.setValor(locacao.getValor() * dias);
+		locacaoDAO.salvar(novaLocacao);
 	}
 }
